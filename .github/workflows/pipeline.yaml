@@ -119,6 +119,6 @@ jobs:
       # Deploy to Production (for tags only)
       - name: Deploy to Production
         if: steps.meta.outputs.is_release_branch == 'false' && github.event.inputs.environment == 'prod'
-        environment: Production
+        #environment: Production
         run: |
           echo "Deploying ${{ steps.meta.outputs.version }} to Production"
