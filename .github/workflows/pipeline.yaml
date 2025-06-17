@@ -105,7 +105,7 @@ jobs:
       # Deploy to Staging (for release branches, after QA approval)
       - name: Deploy to Staging
         if: steps.meta.outputs.is_release_branch == 'true' && github.event.inputs.environment == 'staging'
-        environment: Staging
+        #environment: Staging
         run: |
           echo "Deploying ${{ steps.meta.outputs.image_tag }} to Staging"
 
