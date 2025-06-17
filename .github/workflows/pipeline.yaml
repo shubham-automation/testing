@@ -1,0 +1,124 @@
+name: CI/CD Pipeline
+
+on:
+  workflow_dispatch:
+    inputs:
+      environment:
+        description: 'Select environment to deploy to'
+        required: true
+        default: 'qa'
+        type: choice
+        options:
+          - qa
+          - staging
+          - prod
+
+jobs:
+  build-and-deploy:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read # Read access for repository
+      packages: write # Write access for container registry
+      actions: write # Write access for artifacts
+
+    steps:
+      # Checkout the repository
+      - name: Checkout code
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0 # Fetch full history for commit metadata
+
+      # Extract metadata (branch, commit, version)
+      - name: Extract metadata
+        id: meta
+        run: |
+          if [[ "${{ github.event_name }}" == "push" && "${{ github.ref }}" =~ ^refs/heads/rel/ ]]; then
+            BRANCH_NAME=${GITHUB_REF#refs/heads/}
+            VERSION=$(echo "$BRANCH_NAME" | sed 's|^rel/||')
+            COMMIT_SHORT=$(echo "${{ github.sha }}" | cut -c1-7)
+            IMAGE_TAG="${VERSION}-${COMMIT_SHORT}"
+            echo "version=${VERSION}" >> $GITHUB_OUTPUT
+            echo "image_tag=${IMAGE_TAG}" >> $GITHUB_OUTPUT
+            echo "commit_sha=${{ github.sha }}" >> $GITHUB_OUTPUT
+            echo "is_release_branch=true" >> $GITHUB_OUTPUT
+          elif [[ "${{ github.event_name }}" == "push" && "${{ github.ref }}" =~ ^refs/tags/v ]]; then
+            VERSION=${GITHUB_REF#refs/tags/v}
+            TAG_COMMIT=$(git rev-parse "${{ github.ref }}")
+            echo "version=${VERSION}" >> $GITHUB_OUTPUT
+            echo "commit_sha=$TAG_COMMIT" >> $GITHUB_OUTPUT
+            echo "is_release_branch=false" >> $GITHUB_OUTPUT
+          fi
+
+      # Build and push Docker image (for release branches only)
+      - name: Build and push Docker image
+        if: steps.meta.outputs.is_release_branch == 'true' && github.event.inputs.environment == 'qa'
+        run: |
+          echo "Build and push Docker image: ${{ steps.meta.outputs.image_tag }}"
+
+      # Store release metadata as artifact (for release branches only)
+      - name: Store release metadata as artifact
+        if: steps.meta.outputs.is_release_branch == 'true' && github.event.inputs.environment == 'qa'
+        run: |
+          echo "{\"version\": \"${{ steps.meta.outputs.version }}\", \"image_tag\": \"${{ steps.meta.outputs.image_tag }}\", \"commit_sha\": \"${{ steps.meta.outputs.commit_sha }}\"}" > release-metadata.json
+          mkdir -p artifacts
+          mv release-metadata.json artifacts/
+          echo "Store release metadata as artifact"
+          cat artifacts/release-metadata.json
+
+      # Upload artifact (for release branches only)
+      - name: Upload release metadata artifact
+        if: steps.meta.outputs.is_release_branch == 'true' && github.event.inputs.environment == 'qa'
+        uses: actions/upload-artifact@v4
+        with:
+          name: release-metadata-${{ steps.meta.outputs.commit_sha }}
+          path: artifacts/release-metadata.json
+          retention-days: 7 # Adjust retention as needed
+
+      # Download artifact for production (for tags only)
+      - name: Download release metadata artifact
+        if: steps.meta.outputs.is_release_branch == 'false' && github.event.inputs.environment == 'prod'
+        uses: actions/download-artifact@v4
+        with:
+          name: release-metadata-${{ steps.meta.outputs.commit_sha }}
+          path: artifacts/
+
+      # Extract image tag from artifact (for tags only)
+      - name: Extract image tag from artifact
+        if: steps.meta.outputs.is_release_branch == 'false' && github.event.inputs.environment == 'prod'
+        id: artifact-meta
+        run: |
+          if [ -f artifacts/release-metadata.json ]; then
+            IMAGE_TAG=$(jq -r '.image_tag' artifacts/release-metadata.json)
+            echo "image_tag=$IMAGE_TAG" >> $GITHUB_OUTPUT
+            echo "Extract image tag from artifact: $IMAGE_TAG"
+          else
+            echo "Error: release-metadata.json not found in artifact"
+            exit 1
+          fi
+
+      # Deploy to QA (for release branches)
+      - name: Deploy to QA
+        if: steps.meta.outputs.is_release_branch == 'true' && github.event.inputs.environment == 'qa'
+        run: |
+          echo "Deploying ${{ steps.meta.outputs.image_tag }} to QA"
+
+      # Deploy to Staging (for release branches, after QA approval)
+      - name: Deploy to Staging
+        if: steps.meta.outputs.is_release_branch == 'true' && github.event.inputs.environment == 'staging'
+        environment: Staging
+        run: |
+          echo "Deploying ${{ steps.meta.outputs.image_tag }} to Staging"
+
+      # Re-tag Docker image for production (for tags only)
+      - name: Re-tag Docker image for production
+        if: steps.meta.outputs.is_release_branch == 'false' && github.event.inputs.environment == 'prod'
+        run: |
+          echo "Pulling docker image for prod: ${{ steps.artifact-meta.outputs.image_tag }}"
+          echo "Tagging docker image for prod: ${{ steps.meta.outputs.version }}"
+
+      # Deploy to Production (for tags only)
+      - name: Deploy to Production
+        if: steps.meta.outputs.is_release_branch == 'false' && github.event.inputs.environment == 'prod'
+        environment: Production
+        run: |
+          echo "Deploying ${{ steps.meta.outputs.version }} to Production"
