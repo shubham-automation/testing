@@ -1,0 +1,313 @@
+name: Multi-Environment Deployment
+
+on:
+  push:
+    branches:
+      - develop
+  workflow_dispatch:
+    inputs:
+      environment:
+        description: 'Select environment to deploy to'
+        required: true
+        default: 'qa'
+        type: choice
+        options:
+          - qa
+          - uat
+          - prod
+
+jobs:
+  build:
+    runs-on: arc-org-runner-set
+    if: github.event_name == 'push' && github.ref == 'refs/heads/develop' || github.event_name == 'workflow_dispatch' && github.event.inputs.environment == 'qa'
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v4
+
+      - name: Login to Azure
+        uses: azure/login@v2
+        with:
+          creds: '{"clientId":"${{ secrets.AZURE_CLIENT_ID }}","clientSecret":"${{ secrets.AZURE_CLIENT_SECRET }}","tenantId":"${{ secrets.AZURE_TENANT_ID }}","subscriptionId":"${{ secrets.AZURE_SUBSCRIPTION_ID }}"}'
+
+      - name: Login to Azure Container Registry
+        run: az acr login --name ${{ secrets.ACR_REGISTRY }}
+
+      - name: Get branch name
+        id: get_branch
+        run: |
+          echo "BRANCH=${{ github.ref_name }}" >> $GITHUB_ENV
+
+      - name: Get short commit ID
+        id: get_commit
+        run: |
+          SHORT_COMMIT_ID=$(git rev-parse --short HEAD)
+          echo "SHORT_COMMIT_ID=$SHORT_COMMIT_ID" >> $GITHUB_ENV
+
+      - name: Build, Tag, and Push Image to ACR
+        run: |
+          if [ "$BRANCH" = "develop" ]; then
+            IMAGE_TAG="develop"-$SHORT_COMMIT_ID
+          elif [[ "$BRANCH" =~ ^(rel|hotfix)/[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+            IMAGE_TAG=$(echo "$BRANCH" | cut -d'/' -f2)-$SHORT_COMMIT_ID
+          fi
+          docker build -t ${{ secrets.ACR_REGISTRY }}.azurecr.io/${{ secrets.ACR_REPOSITORY }}:$IMAGE_TAG .
+          docker push ${{ secrets.ACR_REGISTRY }}.azurecr.io/${{ secrets.ACR_REPOSITORY }}:$IMAGE_TAG
+
+  deploy-dev:
+    runs-on: arc-org-runner-set
+    needs: build
+    if: github.event_name == 'push' && github.ref == 'refs/heads/develop'
+    environment: dev
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v4
+
+      - name: Login to Azure
+        uses: azure/login@v2
+        with:
+          creds: '{"clientId":"${{ secrets.AZURE_CLIENT_ID }}","clientSecret":"${{ secrets.AZURE_CLIENT_SECRET }}","tenantId":"${{ secrets.AZURE_TENANT_ID }}","subscriptionId":"${{ secrets.AZURE_SUBSCRIPTION_ID }}"}'
+
+      - name: Set AZ Subscription
+        run: az account set --subscription ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+    
+      - name: Get AKS Credentials
+        run: az aks get-credentials --resource-group ${{ secrets.K8S_RESOURCE_GROUP }} --name ${{ secrets.K8S_CLUSTER_NAME }} --overwrite-existing
+  
+      - name: Kubelogin plugin authentication
+        run: kubelogin convert-kubeconfig -l azurecli
+
+      - name: Get short commit ID
+        id: get_commit
+        run: |
+          echo "SHORT_COMMIT_ID=${GITHUB_SHA::7}" >> $GITHUB_ENV
+
+      - name: Generate ACR pull secret
+        id: get_dockerconfigjson
+        run: |
+          SECRET_JSON=$(kubectl create secret docker-registry acr-pull-secret \
+               --docker-server=${{ secrets.ACR_REGISTRY }}.azurecr.io \
+               --docker-username=${{ secrets.ACR_USERNAME }} \
+               --docker-password=${{ secrets.ACR_PASSWORD }} \
+               --namespace=dev \
+               --dry-run=client \
+               -o json | jq -r '.data.".dockerconfigjson"')
+               
+          echo "dockerconfigjson=$SECRET_JSON" >> $GITHUB_OUTPUT
+
+      - name: Deploy Helm chart
+        run: |
+          helm upgrade --install flask-app ./helm \
+            --set image.repository=${{ secrets.ACR_REGISTRY }}.azurecr.io/${{ secrets.ACR_REPOSITORY }} \
+            --set image.tag="develop"-$SHORT_COMMIT_ID \
+            --set db.host=${{ secrets.DB_HOST }} \
+            --set secret.dbUser=${{ secrets.DB_USER }} \
+            --set secret.dbPassword=${{ secrets.DB_PASSWORD }} \
+            --set imagePullSecret.dockerconfigjson=${{ steps.get_dockerconfigjson.outputs.dockerconfigjson }} \
+            --namespace dev \
+            --create-namespace \
+            --wait
+
+  deploy-qa:
+    runs-on: arc-org-runner-set
+    needs: build
+    if: github.event_name == 'workflow_dispatch' && github.event.inputs.environment == 'qa' && (startsWith(github.ref_name, 'rel/') || startsWith(github.ref_name, 'hotfix/'))
+    environment: qa
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v4
+
+      - name: Validate branch name
+        run: |
+          if [[ "${{ github.ref_name }}" =~ ^(rel|hotfix)/[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+            echo "Branch ${{ github.ref_name }} is valid for QA deployment"
+          else
+            echo "Error: Branch name ${{ github.ref_name }} does not match rel/x.x.x or hotfix/x.x.x format."
+            exit 1
+          fi
+
+      - name: Login to Azure
+        uses: azure/login@v2
+        with:
+          creds: '{"clientId":"${{ secrets.AZURE_CLIENT_ID }}","clientSecret":"${{ secrets.AZURE_CLIENT_SECRET }}","tenantId":"${{ secrets.AZURE_TENANT_ID }}","subscriptionId":"${{ secrets.AZURE_SUBSCRIPTION_ID }}"}'
+
+      - name: Set AZ Subscription
+        run: az account set --subscription ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+    
+      - name: Get AKS Credentials
+        run: az aks get-credentials --resource-group ${{ secrets.K8S_RESOURCE_GROUP }} --name ${{ secrets.K8S_CLUSTER_NAME }} --overwrite-existing
+
+      - name: Kubelogin plugin authentication
+        run: kubelogin convert-kubeconfig -l azurecli
+
+      - name: Get VERSION from branch name
+        id: get_version
+        run: |
+          echo "VERSION=${GITHUB_REF##*/}" >> $GITHUB_ENV
+
+      - name: Get short commit ID
+        id: get_commit
+        run: |
+          echo "SHORT_COMMIT_ID=${GITHUB_SHA::7}" >> $GITHUB_ENV
+
+      - name: Generate ACR pull secret
+        id: get_dockerconfigjson
+        run: |
+          SECRET_JSON=$(kubectl create secret docker-registry acr-pull-secret \
+               --docker-server=${{ secrets.ACR_REGISTRY }}.azurecr.io \
+               --docker-username=${{ secrets.ACR_USERNAME }} \
+               --docker-password=${{ secrets.ACR_PASSWORD }} \
+               --namespace=qa \
+               --dry-run=client \
+               -o json | jq -r '.data.".dockerconfigjson"')
+               
+          echo "dockerconfigjson=$SECRET_JSON" >> $GITHUB_OUTPUT
+
+      - name: Deploy Helm chart
+        run: |
+          IMAGE_TAG="$VERSION"-"$SHORT_COMMIT_ID"
+          helm upgrade --install flask-app ./helm \
+            --set image.repository=${{ secrets.ACR_REGISTRY }}.azurecr.io/${{ secrets.ACR_REPOSITORY }} \
+            --set image.tag="$IMAGE_TAG" \
+            --set db.host=${{ secrets.DB_HOST }} \
+            --set secret.dbUser=${{ secrets.DB_USER }} \
+            --set secret.dbPassword=${{ secrets.DB_PASSWORD }} \
+            --set imagePullSecret.dockerconfigjson=${{ steps.get_dockerconfigjson.outputs.dockerconfigjson }} \
+            --namespace qa \
+            --create-namespace \
+            --wait
+
+  deploy-uat:
+    runs-on: arc-org-runner-set
+    if: github.event_name == 'workflow_dispatch' && github.event.inputs.environment == 'uat' && (startsWith(github.ref_name, 'rel/') || startsWith(github.ref_name, 'hotfix/'))
+    environment: uat
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v4
+
+      - name: Validate branch name
+        run: |
+          if [[ "${{ github.ref_name }}" =~ ^(rel|hotfix)/[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+            echo "Branch ${{ github.ref_name }} is valid for UAT deployment"
+          else
+            echo "Error: Branch name ${{ github.ref_name }} does not match rel/x.x.x or hotfix/x.x.x format."
+            exit 1
+          fi
+
+      - name: Login to Azure
+        uses: azure/login@v2
+        with:
+          creds: '{"clientId":"${{ secrets.AZURE_CLIENT_ID }}","clientSecret":"${{ secrets.AZURE_CLIENT_SECRET }}","tenantId":"${{ secrets.AZURE_TENANT_ID }}","subscriptionId":"${{ secrets.AZURE_SUBSCRIPTION_ID }}"}'
+
+      - name: Set AZ Subscription
+        run: az account set --subscription ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+    
+      - name: Get AKS Credentials
+        run: az aks get-credentials --resource-group ${{ secrets.K8S_RESOURCE_GROUP }} --name ${{ secrets.K8S_CLUSTER_NAME }} --overwrite-existing
+
+      - name: Kubelogin plugin authentication
+        run: kubelogin convert-kubeconfig -l azurecli
+
+      - name: Get VERSION from branch name
+        id: get_version
+        run: |
+          echo "VERSION=${GITHUB_REF##*/}" >> $GITHUB_ENV
+
+      - name: Get short commit ID
+        id: get_commit
+        run: |
+          echo "SHORT_COMMIT_ID=${GITHUB_SHA::7}" >> $GITHUB_ENV
+
+      - name: Generate ACR pull secret
+        id: get_dockerconfigjson
+        run: |
+          SECRET_JSON=$(kubectl create secret docker-registry acr-pull-secret \
+               --docker-server=${{ secrets.ACR_REGISTRY }}.azurecr.io \
+               --docker-username=${{ secrets.ACR_USERNAME }} \
+               --docker-password=${{ secrets.ACR_PASSWORD }} \
+               --namespace=uat \
+               --dry-run=client \
+               -o json | jq -r '.data.".dockerconfigjson"')
+               
+          echo "dockerconfigjson=$SECRET_JSON" >> $GITHUB_OUTPUT
+
+      - name: Deploy Helm chart
+        run: |
+          IMAGE_TAG="$VERSION"-"$SHORT_COMMIT_ID"
+          helm upgrade --install flask-app ./helm \
+            --set image.repository=${{ secrets.ACR_REGISTRY }}.azurecr.io/${{ secrets.ACR_REPOSITORY }} \
+            --set image.tag="$IMAGE_TAG" \
+            --set db.host=${{ secrets.DB_HOST }} \
+            --set secret.dbUser=${{ secrets.DB_USER }} \
+            --set secret.dbPassword=${{ secrets.DB_PASSWORD }} \
+            --set imagePullSecret.dockerconfigjson=${{ steps.get_dockerconfigjson.outputs.dockerconfigjson }} \
+            --namespace uat \
+            --create-namespace \
+            --wait
+
+  deploy-prod:
+    runs-on: arc-org-runner-set
+    if: github.event_name == 'workflow_dispatch' && github.event.inputs.environment == 'prod' && (startsWith(github.ref_name, 'rel/') || startsWith(github.ref_name, 'hotfix/'))
+    environment: prod
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v4
+
+      - name: Validate branch name
+        run: |
+          if [[ "${{ github.ref_name }}" =~ ^(rel|hotfix)/[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+            echo "Branch ${{ github.ref_name }} is valid for PROD deployment"
+          else
+            echo "Error: Branch name ${{ github.ref_name }} does not match rel/x.x.x or hotfix/x.x.x format."
+            exit 1
+          fi
+ 
+      - name: Login to Azure
+        uses: azure/login@v2
+        with:
+          creds: '{"clientId":"${{ secrets.AZURE_CLIENT_ID }}","clientSecret":"${{ secrets.AZURE_CLIENT_SECRET }}","tenantId":"${{ secrets.AZURE_TENANT_ID }}","subscriptionId":"${{ secrets.AZURE_SUBSCRIPTION_ID }}"}'
+
+      - name: Set AZ Subscription
+        run: az account set --subscription ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+    
+      - name: Get AKS Credentials
+        run: az aks get-credentials --resource-group ${{ secrets.K8S_RESOURCE_GROUP }} --name ${{ secrets.K8S_CLUSTER_NAME }} --overwrite-existing
+
+      - name: Kubelogin plugin authentication
+        run: kubelogin convert-kubeconfig -l azurecli
+
+      - name: Get VERSION from branch name
+        id: get_version
+        run: |
+          echo "VERSION=${GITHUB_REF##*/}" >> $GITHUB_ENV
+
+      - name: Get short commit ID
+        id: get_commit
+        run: |
+          echo "SHORT_COMMIT_ID=${GITHUB_SHA::7}" >> $GITHUB_ENV
+
+      - name: Generate ACR pull secret
+        id: get_dockerconfigjson
+        run: |
+          SECRET_JSON=$(kubectl create secret docker-registry acr-pull-secret \
+               --docker-server=${{ secrets.ACR_REGISTRY }}.azurecr.io \
+               --docker-username=${{ secrets.ACR_USERNAME }} \
+               --docker-password=${{ secrets.ACR_PASSWORD }} \
+               --namespace=prod \
+               --dry-run=client \
+               -o json | jq -r '.data.".dockerconfigjson"')
+               
+          echo "dockerconfigjson=$SECRET_JSON" >> $GITHUB_OUTPUT
+
+      - name: Deploy Helm chart
+        run: |
+          IMAGE_TAG="$VERSION"-"$SHORT_COMMIT_ID"
+          helm upgrade --install flask-app ./helm \
+            --set image.repository=${{ secrets.ACR_REGISTRY }}.azurecr.io/${{ secrets.ACR_REPOSITORY }} \
+            --set image.tag="$IMAGE_TAG" \
+            --set db.host=${{ secrets.DB_HOST }} \
+            --set secret.dbUser=${{ secrets.DB_USER }} \
+            --set secret.dbPassword=${{ secrets.DB_PASSWORD }} \
+            --set imagePullSecret.dockerconfigjson=${{ steps.get_dockerconfigjson.outputs.dockerconfigjson }} \
+            --namespace prod \
+            --create-namespace \
+            --wait
