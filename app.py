@@ -39,14 +39,15 @@ def init_db():
 
 @app.route('/users', methods=['GET'])
 def get_users():
+    id = request.args.get('id')
     connection = get_db_connection()
     if not connection:
         return jsonify({'error': 'Database connection failed'}), 500
     
     try:
         cursor = connection.cursor(dictionary=True)
-        cursor.execute("SELECT * FROM users")
-        users = cursor.fetchall()
+        cursor.execute("SELECT * FROM users WHERE id = %s", (id,))
+        users = cursor.fetchone()
         cursor.close()
         connection.close()
         return jsonify(users), 200
