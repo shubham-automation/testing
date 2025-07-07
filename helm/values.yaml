@@ -1,0 +1,31 @@
+replicaCount: 1
+
+image:
+  repository: flask-app
+  tag: "latest"
+  pullPolicy: Always
+
+service:
+  type: ClusterIP
+  port: 5000
+
+resources:
+  limits:
+    cpu: "500m"
+    memory: "512Mi"
+  requests:
+    cpu: "200m"
+    memory: "256Mi"
+
+db:
+  host: ""
+  port: "27508"
+  database: "defaultdb"
+
+secret:
+  dbUser: ""
+  dbPassword: ""
+
+imagePullSecret:
+  name: acr-secret
+  dockerconfigjson: ""
