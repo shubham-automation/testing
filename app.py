@@ -52,6 +52,29 @@ def get_users():
         return jsonify(users), 200
     except Error as e:
         return jsonify({'error': str(e)}), 500
+
+@app.route('/users', methods=['POST'])
+def add_user():
+    data = request.get_json()
+    name = data.get('name')
+    email = data.get('email')
+    
+    if not name or not email:
+        return jsonify({'error': 'Name and email are required'}), 400
+    
+    connection = get_db_connection()
+    if not connection:
+        return jsonify({'error': 'Database connection failed'}), 500
+    
+    try:
+        cursor = connection.cursor()
+        cursor.execute("INSERT INTO users (name, email) VALUES (%s, %s)", (name, email))
+        connection.commit()
+        cursor.close()
+        connection.close()
+        return jsonify({'message': 'User added successfully'}), 201
+    except Error as e:
+        return jsonify({'error': str(e)}), 500
     
 if __name__ == '__main__':
     init_db()
