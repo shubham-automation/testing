@@ -39,14 +39,25 @@ jobs:
           git config user.name "${{ secrets.GIT_USERNAME }}"
           git config user.email "${{ secrets.GIT_EMAIL }}"
 
-      # Run semantic-release using Docker
+      # Set up Node.js environment
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'  # Use a stable Node.js version
+
+      # Install semantic-release and plugins globally
+      - name: Install semantic-release
+        run: |
+          npm install -g semantic-release \
+                        @semantic-release/commit-analyzer \
+                        @semantic-release/release-notes-generator \
+                        @semantic-release/exec \
+                        @semantic-release/git \
+                        @semantic-release/github
+                        
+      # Run semantic-release
       - name: Run semantic-release
         env:
-          GITHUB_TOKEN: ${{ secrets.GIT_TOKEN }}
+          GITHUB_TOKEN: ${{ secrets.GH_TOKEN }}
         run: |
-          docker run \
-            --rm \
-            -e GITHUB_TOKEN \
-            -v $(pwd):/usr/src/app \
-            semantic-release/semantic-release \
-            --no-ci
+          npx semantic-release --no-ci
