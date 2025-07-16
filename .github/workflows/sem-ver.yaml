@@ -19,6 +19,12 @@ jobs:
       pull-requests: write  # For release management
 
     steps:
+      # Checkout the repository
+      - name: Checkout code
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0  # Fetch full history for commit analysis
+          
       # Validate version.txt format
       - name: Validate version.txt
         run: |
@@ -26,12 +32,6 @@ jobs:
             echo "Error: version.txt does not contain a valid semantic version (e.g., 1.0.0)"
             exit 1
           fi
-
-      # Checkout the repository
-      - name: Checkout code
-        uses: actions/checkout@v4
-        with:
-          fetch-depth: 0  # Fetch full history for commit analysis
 
       # Set up git configuration
       - name: Set up git
