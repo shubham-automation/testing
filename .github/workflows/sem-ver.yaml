@@ -6,58 +6,97 @@ on:
       - main
       - rel/[0-9]+.[0-9]+.[0-9]+  # Match rel/x.x.x branches
 
+jobs:
+  Patch:
+    runs-on: ubuntu-latest
+    steps:
+    - uses: actions/checkout@v2
+      with:
+        fetch-depth: '0'
+
+    - name: Minor version for each merge
+      id: taggerDryRun
+      uses: anothrNick/github-tag-action@1.73.0
+      env:
+        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        WITH_V: true
+        DRY_RUN: true
+
+    - name: echo new tag
+      run: |
+        echo "The next tag version will be: ${{ steps.taggerDryRun.outputs.new_tag }}"
+
+    - name: echo tag
+      run: |
+        echo "The current tag is: ${{ steps.taggerDryRun.outputs.tag }}"
+
+    - name: echo part
+      run: |
+        echo "The version increment was: ${{ steps.taggerDryRun.outputs.part }}"
+
+    # DO MY BUILD HERE
+    # IN CASE OF FAILURE, THE STEP BELOW WILL NOT RUN.
+    
+
+    - name: Minor version for each merge
+      id: taggerFinal
+      uses: anothrNick/github-tag-action@1.36.0
+      env:
+        GITHUB_TOKEN: ${{ secrets.GIT_TOKEN }}
+        WITH_V: true
+
 # concurrency:
 #   group: semantic-release-${{ github.ref }}
 #   cancel-in-progress: true
 
-jobs:
-  release:
-    runs-on: ubuntu-latest
-    permissions:
-      contents: write  # For pushing commits and tags
-      issues: write    # For GitHub release notes
-      pull-requests: write  # For release management
+# jobs:
+#   release:
+#     runs-on: ubuntu-latest
+#     permissions:
+#       contents: write  # For pushing commits and tags
+#       issues: write    # For GitHub release notes
+#       pull-requests: write  # For release management
 
-    steps:
-      # Checkout the repository
-      - name: Checkout code
-        uses: actions/checkout@v4
-        with:
-          fetch-depth: 0  # Fetch full history for commit analysis
+#     steps:
+#       # Checkout the repository
+#       - name: Checkout code
+#         uses: actions/checkout@v4
+#         with:
+#           fetch-depth: 0  # Fetch full history for commit analysis
           
-      # Validate version.txt format
-      - name: Validate version.txt
-        run: |
-          if ! grep -qE '^[0-9]+\.[0-9]+\.[0-9]+$' version.txt; then
-            echo "Error: version.txt does not contain a valid semantic version (e.g., 1.0.0)"
-            exit 1
-          fi
+#       # Validate version.txt format
+#       - name: Validate version.txt
+#         run: |
+#           if ! grep -qE '^[0-9]+\.[0-9]+\.[0-9]+$' version.txt; then
+#             echo "Error: version.txt does not contain a valid semantic version (e.g., 1.0.0)"
+#             exit 1
+#           fi
 
-      # Set up git configuration
-      - name: Set up git
-        run: |
-          git config user.name "${{ secrets.GIT_USERNAME }}"
-          git config user.email "${{ secrets.GIT_EMAIL }}"
+#       # Set up git configuration
+#       - name: Set up git
+#         run: |
+#           git config user.name "${{ secrets.GIT_USERNAME }}"
+#           git config user.email "${{ secrets.GIT_EMAIL }}"
 
-      # Set up Node.js environment
-      - name: Set up Node.js
-        uses: actions/setup-node@v4
-        with:
-          node-version: '20'  # Use a stable Node.js version
+#       # Set up Node.js environment
+#       - name: Set up Node.js
+#         uses: actions/setup-node@v4
+#         with:
+#           node-version: '20'  # Use a stable Node.js version
 
-      # Install semantic-release and plugins globally
-      - name: Install semantic-release
-        run: |
-          npm install -g semantic-release \
-                        @semantic-release/commit-analyzer \
-                        @semantic-release/release-notes-generator \
-                        @semantic-release/exec \
-                        @semantic-release/git \
-                        @semantic-release/github
+#       # Install semantic-release and plugins globally
+#       - name: Install semantic-release
+#         run: |
+#           npm install -g semantic-release \
+#                         @semantic-release/commit-analyzer \
+#                         @semantic-release/release-notes-generator \
+#                         @semantic-release/exec \
+#                         @semantic-release/git \
+#                         @semantic-release/github
                         
-      # Run semantic-release
-      - name: Run semantic-release
-        env:
-          GITHUB_TOKEN: ${{ secrets.GH_TOKEN }}
-        run: |
-          npx semantic-release --no-ci
+#       # Run semantic-release
+#       - name: Run semantic-release
+#         env:
+#           GITHUB_TOKEN: ${{ secrets.GIT_TOKEN }}
+#         run: |
+#           npx semantic-release --no-ci
