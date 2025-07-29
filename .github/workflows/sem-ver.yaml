@@ -3,6 +3,12 @@ name: ENTRA_ID_TESTING
 on:
   workflow_dispatch:
 
+permissions:
+  id-token: write
+  issues: write
+  pull-requests: write
+  contents: read
+
 
 jobs:
   build:
