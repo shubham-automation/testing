@@ -1,128 +1,22 @@
-name: Semantic Release
+name: ENTRA_ID_TESTING
 
 on:
   workflow_dispatch:
 
+
 jobs:
-  version-bump:
-    runs-on: ubuntu-latest
+  build:
+    runs-on: arc-org-runner-set
     steps:
-      - name: Checkout code
-        uses: actions/checkout@v3
+      - name: Checkout Code
+        uses: actions/checkout@v4
+
+      - name: 'Az CLI login'
+        uses: azure/login@v2
         with:
-          fetch-depth: 0 # Ensure full history is available for semantic versioning
+          client-id: ${{ secrets.CLIENT_ID }}
+          tenant-id: ${{ secrets.TENANT_ID }}
+          subscription-id: ${{ secrets.SUB_ID }}
 
-      - name: Get next version
-        id: version
-        uses: reecetech/version-increment@2024.10.1
-        with:
-          use_api: true # Uses API mode to avoid needing git checkout
-
-      - name: Create Release
-        if: ${{ steps.version.outputs.version_incremented == 'true' }}
-        run: |
-          echo "New version: ${{ steps.version.outputs.version }}"
-          echo "Version bumped: ${{ steps.version.outputs.version_incremented }}"
-          # Commit the new version (example: updating package.json)
-          # git config --local user.email "action@github.com"
-          # git config --local user.name "GitHub Action"
-          # git add package.json
-          # git commit -m "chore(release): bump version to ${{ steps.version.outputs.version }}"
-          # git push
-        env:
-          GITHUB_TOKEN: ${{ secrets.GIT_TOKEN }}
-          
-# jobs:
-#   Patch:
-#     runs-on: ubuntu-latest
-#     steps:
-#     - uses: actions/checkout@v2
-#       with:
-#         fetch-depth: '0'
-
-#     - name: Minor version for each merge
-#       id: taggerDryRun
-#       uses: anothrNick/github-tag-action@1.73.0
-#       env:
-#         GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-#         WITH_V: true
-#         DRY_RUN: true
-
-#     - name: echo new tag
-#       run: |
-#         echo "The next tag version will be: ${{ steps.taggerDryRun.outputs.new_tag }}"
-
-#     - name: echo tag
-#       run: |
-#         echo "The current tag is: ${{ steps.taggerDryRun.outputs.tag }}"
-
-#     - name: echo part
-#       run: |
-#         echo "The version increment was: ${{ steps.taggerDryRun.outputs.part }}"
-
-#     # DO MY BUILD HERE
-#     # IN CASE OF FAILURE, THE STEP BELOW WILL NOT RUN.
-    
-
-#     - name: Minor version for each merge
-#       id: taggerFinal
-#       uses: anothrNick/github-tag-action@1.36.0
-#       env:
-#         GITHUB_TOKEN: ${{ secrets.GIT_TOKEN }}
-#         WITH_V: true
-
-# concurrency:
-#   group: semantic-release-${{ github.ref }}
-#   cancel-in-progress: true
-
-# jobs:
-#   release:
-#     runs-on: ubuntu-latest
-#     permissions:
-#       contents: write  # For pushing commits and tags
-#       issues: write    # For GitHub release notes
-#       pull-requests: write  # For release management
-
-#     steps:
-#       # Checkout the repository
-#       - name: Checkout code
-#         uses: actions/checkout@v4
-#         with:
-#           fetch-depth: 0  # Fetch full history for commit analysis
-          
-#       # Validate version.txt format
-#       - name: Validate version.txt
-#         run: |
-#           if ! grep -qE '^[0-9]+\.[0-9]+\.[0-9]+$' version.txt; then
-#             echo "Error: version.txt does not contain a valid semantic version (e.g., 1.0.0)"
-#             exit 1
-#           fi
-
-#       # Set up git configuration
-#       - name: Set up git
-#         run: |
-#           git config user.name "${{ secrets.GIT_USERNAME }}"
-#           git config user.email "${{ secrets.GIT_EMAIL }}"
-
-#       # Set up Node.js environment
-#       - name: Set up Node.js
-#         uses: actions/setup-node@v4
-#         with:
-#           node-version: '20'  # Use a stable Node.js version
-
-#       # Install semantic-release and plugins globally
-#       - name: Install semantic-release
-#         run: |
-#           npm install -g semantic-release \
-#                         @semantic-release/commit-analyzer \
-#                         @semantic-release/release-notes-generator \
-#                         @semantic-release/exec \
-#                         @semantic-release/git \
-#                         @semantic-release/github
-                        
-#       # Run semantic-release
-#       - name: Run semantic-release
-#         env:
-#           GITHUB_TOKEN: ${{ secrets.GIT_TOKEN }}
-#         run: |
-#           npx semantic-release --no-ci
+      - name: List RG
+        run: az group list
