@@ -14,8 +14,8 @@ jobs:
   build:
     runs-on: arc-org-runner-set
     steps:
-      - name: Checkout Code
-        uses: actions/checkout@v4
+      # - name: Checkout Code
+      #   uses: actions/checkout@v4
 
       - name: 'Az CLI login'
         uses: azure/login@v2
